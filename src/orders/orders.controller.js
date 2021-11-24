@@ -33,10 +33,16 @@ function read(req, res) {
 function requiredFieldsCheck(data) {
   const requiredFields = ["deliverTo", "mobileNumber", "dishes"];
   for (const field of requiredFields) {
-    if (!data[field]) {
+    if (!data[field] && field !== "dishes") {
       return {
         status: 400,
         message: `Order must include a ${field}`,
+      };
+    }
+    if (!data[field] && field === "dishes") {
+      return {
+        status: 400,
+        message: `Order must include a dish`,
       };
     }
   }
@@ -58,7 +64,7 @@ function invalidDishQuantityCheck(dishes) {
 }
 
 function invalidDishesCheck(dishes) {
-  if (Array.isArray(dishes) === false || dishes.length === []) {
+  if (!Array.isArray(dishes) || dishes.length === 0) {
     return {
       status: 400,
       messages: "Order must include at least one dish",
@@ -76,27 +82,14 @@ function validateOrderId(id, orderId) {
   }
 }
 
-function validateStatus(orderId) {
-  const foundOrder = orders.find((order) => order.id === orderId);
-  if (foundOrder.status === undefined) {
+function validateStatus(status) {
+  if (!status || status === "" || status === "invalid") {
     return {
       status: 400,
       message:
         "Order must have a status of pending, preparing, out-for-delivery, delivered",
     };
   }
-  if (foundOrder.status === "delivered") {
-    return {
-      status: 400,
-      message: "A delivered order cannot be changed",
-    };
-  }
-  //   if (foundOrder.status !== "pending") {
-  //     return next({
-  //       status: 400,
-  //       message: "An order cannot be deleted unless it is pending",
-  //     });
-  //   }
 }
 
 function isValidOrder(req, res, next) {
@@ -111,8 +104,7 @@ function isValidOrder(req, res, next) {
   if (invalidFieldsError) {
     return next(invalidFieldsError);
   }
-  const orderDishes = data.dishes;
-  console.log(Array.isArray(orderDishes));
+
   const invalidDishesError = invalidDishesCheck(data.dishes);
   if (invalidDishesError) return next(invalidDishesError);
 
@@ -120,7 +112,8 @@ function isValidOrder(req, res, next) {
   if (data.id) {
     const invalidIdError = validateOrderId(data.id, orderId);
     if (invalidIdError) return next(invalidIdError);
-    const invalidStatusError = validateStatus(orderId);
+
+    const invalidStatusError = validateStatus(data.status);
     if (invalidStatusError) return next(invalidStatusError);
   }
 
@@ -140,6 +133,17 @@ function create(req, res) {
   res.status(201).json({ data: newOrder });
 }
 
+function checkIfDelivered(req, res, next) {
+  const foundOrder = res.locals.order;
+  if (foundOrder.status === "delivered") {
+    return next({
+      status: 400,
+      message: "A delivered order cannot be changed",
+    });
+  }
+  next();
+}
+
 function update(req, res) {
   const foundOrder = res.locals.order;
   const { data: { deliverTo, mobileNumber, status, dishes } = {} } = req.body;
@@ -154,6 +158,18 @@ function update(req, res) {
   res.json({ data: updatedOrder });
 }
 
+function verifyPendingStatus(req, res, next) {
+  const foundOrder = res.locals.order;
+  if (foundOrder.status !== "pending") {
+    return next({
+      status: 400,
+      message: "An order cannot be deleted unless it is pending",
+    });
+  }
+  
+  next();
+}
+
 function destory(req, res) {
   const { orderId } = req.params;
   const index = orders.findIndex((order) => order.id === orderId);
@@ -166,7 +182,7 @@ function destory(req, res) {
 module.exports = {
   list,
   create: [isValidOrder, create],
-  update: [orderExists, isValidOrder, update],
+  update: [orderExists, isValidOrder, checkIfDelivered, update],
   read: [orderExists, read],
-  delete: [orderExists, destory],
+  delete: [orderExists, verifyPendingStatus, destory],
 };
